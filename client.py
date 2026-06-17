@@ -100,18 +100,34 @@ class CquptClient:
         抛出 NetworkParamsError: 如果无法获取参数
         """
         last_error = None
+        saw_redirect = False  # 是否至少有一个探测地址触发了重定向
 
         for probe_url in PROBE_URLS:
             try:
                 return self._try_get_params(probe_url)
             except NetworkParamsError as e:
                 last_error = e
+                # 判断是否为"未触发重定向"类错误 (非重定向探测失败)
+                if "未触发" in str(e) or "返回 HTTP" in str(e):
+                    saw_redirect = False  # 此地址未触发重定向
+                else:
+                    saw_redirect = True   # 触发了重定向但解析失败
                 continue
+
+        # 所有探测地址均未触发重定向 → 很可能是 VPN/代理导致
+        if not saw_redirect:
+            raise NetworkParamsError(
+                "无法获取校园网认证参数。\n\n"
+                "所有探测地址均未触发校园网重定向，可能原因:\n"
+                "  1. 已开启 VPN 或代理软件 — 请关闭后重试\n"
+                "  2. 未连接 CQUPT 校园网 (WiFi 或有线)\n"
+                "  3. 已处于认证状态"
+            )
 
         if last_error:
             raise last_error
         raise NetworkParamsError(
-            "无法获取网络参数: 所有探测地址均未触发重定向，"
+            "无法获取网络参数: 所有探测地址均失败，"
             "请确认已连接 CQUPT 校园网 (WiFi 或有线)"
         )
 
@@ -124,8 +140,7 @@ class CquptClient:
         try:
             opener.open(req, timeout=self._timeout)
             raise NetworkParamsError(
-                f"探测 {probe_url} 未触发重定向，"
-                "可能已处于认证状态或不在校园网环境"
+                f"探测 {probe_url} 未触发重定向"
             )
 
         except urllib.error.HTTPError as e:
@@ -134,6 +149,8 @@ class CquptClient:
                 if location:
                     return self._parse_location(location)
 
+            # 非重定向的 HTTP 错误 (如 502): 说明请求到达了外网但未被校园网拦截
+            # 这也是"未触发重定向"的一种情况 (常见于 VPN/代理环境)
             raise NetworkParamsError(
                 f"探测 {probe_url} 返回 HTTP {e.code}"
             )
