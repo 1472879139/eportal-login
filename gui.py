@@ -213,19 +213,18 @@ class CquptLoginGUI:
         )
         self._password_entry.grid(row=1, column=1, sticky=tk.EW, pady=4, padx=(8, 0))
 
-        # 显示/隐藏密码按钮
-        self._show_password = tk.BooleanVar(value=False)
-        self._eye_button = ttk.Button(
+        # 记住密码
+        self._remember_password_var = tk.BooleanVar(value=True)
+        self._remember_password_cb = ttk.Checkbutton(
             account_frame,
-            text="👁",
-            width=3,
-            command=self._toggle_password_visibility,
+            text="记住密码",
+            variable=self._remember_password_var,
         )
-        self._eye_button.grid(row=1, column=2, padx=(4, 0))
+        self._remember_password_cb.grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=2, padx=(8, 0))
 
         # 设备类型
         lbl = ttk.Label(account_frame, text="设备:")
-        lbl.grid(row=2, column=0, sticky=tk.W, pady=4)
+        lbl.grid(row=3, column=0, sticky=tk.W, pady=4)
         self._device_var = tk.StringVar()
         self._device_combo = ttk.Combobox(
             account_frame,
@@ -235,12 +234,12 @@ class CquptLoginGUI:
             width=27,
         )
         self._device_combo.grid(
-            row=2, column=1, columnspan=2, sticky=tk.EW, pady=4, padx=(8, 0)
+            row=3, column=1, columnspan=2, sticky=tk.EW, pady=4, padx=(8, 0)
         )
 
         # 运营商
         lbl = ttk.Label(account_frame, text="运营商:")
-        lbl.grid(row=3, column=0, sticky=tk.W, pady=4)
+        lbl.grid(row=4, column=0, sticky=tk.W, pady=4)
         self._operator_var = tk.StringVar()
         self._operator_combo = ttk.Combobox(
             account_frame,
@@ -250,7 +249,7 @@ class CquptLoginGUI:
             width=27,
         )
         self._operator_combo.grid(
-            row=3, column=1, columnspan=2, sticky=tk.EW, pady=4, padx=(8, 0)
+            row=4, column=1, columnspan=2, sticky=tk.EW, pady=4, padx=(8, 0)
         )
 
         # 设置列权重
@@ -366,8 +365,15 @@ class CquptLoginGUI:
 
         if creds.get("username"):
             self._username_var.set(creds["username"])
-        if creds.get("password"):
+
+        # 记住密码复选框状态 (默认 True，兼容旧配置)
+        remember = creds.get("remember_password", True)
+        self._remember_password_var.set(remember)
+
+        # 仅当用户勾选记住密码时才填充密码
+        if remember and creds.get("password"):
             self._password_var.set(creds["password"])
+        # 否则密码框保持为空
 
         # 设备类型: key → label
         device_key = creds.get("device", "mobile")
@@ -420,6 +426,7 @@ class CquptLoginGUI:
             "auto_start": self._auto_start_var.get(),
             "keep_alive": self._keep_alive_var.get(),
             "keep_alive_interval": interval,
+            "remember_password": self._remember_password_var.get(),
         }
 
     # ------------------------------------------------------------------
@@ -443,6 +450,13 @@ class CquptLoginGUI:
             self._draw_status_dot("green")
             self._status_text.set("● 已连接")
             self._login_button.configure(state=tk.DISABLED)
+
+            # 已登录时禁用账号字段，注销后才能编辑
+            self._username_entry.configure(state=tk.DISABLED)
+            self._password_entry.configure(state=tk.DISABLED)
+            self._device_combo.configure(state="disabled")
+            self._operator_combo.configure(state="disabled")
+            self._remember_password_cb.configure(state=tk.DISABLED)
 
             # 尝试恢复缓存的网络参数，使注销按钮可用
             params = self._config_mgr.load_network_params()
@@ -511,6 +525,7 @@ class CquptLoginGUI:
             password=password,
             device=config["device"],
             operator=config["operator"],
+            remember_password=self._remember_password_var.get(),
         )
 
         self._set_logging_state(True)
@@ -696,15 +711,24 @@ class CquptLoginGUI:
     # ------------------------------------------------------------------
 
     def _set_logging_state(self, logging: bool):
-        """设置登录中状态，禁用/启用相关控件"""
+        """设置登录中状态，禁用/启用相关控件
+
+        已登录时账号字段保持禁用 (注销后才能编辑)
+        """
         self._is_logging = logging
         state = tk.DISABLED if logging else tk.NORMAL
         combo_state = "disabled" if logging else "readonly"
+
+        # 已登录时账号字段始终禁用，注销后才能编辑
+        if not logging and self._is_logged_in:
+            state = tk.DISABLED
+            combo_state = "disabled"
 
         self._username_entry.configure(state=state)
         self._password_entry.configure(state=state)
         self._device_combo.configure(state=combo_state)
         self._operator_combo.configure(state=combo_state)
+        self._remember_password_cb.configure(state=state)
 
         if not self._is_logged_in:
             self._login_button.configure(state=state)
@@ -729,17 +753,6 @@ class CquptLoginGUI:
     def _show_popup(self, title: str, message: str, popup_type: str = "info") -> None:
         """显示居中弹窗通知"""
         PopupNotification.show(self._root, title, message, popup_type)
-
-    def _toggle_password_visibility(self):
-        """切换密码显示/隐藏"""
-        if self._show_password.get():
-            self._password_entry.configure(show="●")
-            self._eye_button.configure(text="👁")
-            self._show_password.set(False)
-        else:
-            self._password_entry.configure(show="")
-            self._eye_button.configure(text="🔒")
-            self._show_password.set(True)
 
     def _center_window(self, width: int, height: int):
         """将窗口居中显示"""

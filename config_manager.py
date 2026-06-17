@@ -142,6 +142,7 @@ class ConfigManager:
             "password": password,
             "device": config.get("device", "mobile"),
             "operator": config.get("operator", "telecom"),
+            "remember_password": config.get("remember_password", True),
         }
 
     def save_credentials(
@@ -150,14 +151,19 @@ class ConfigManager:
         password: str,
         device: str = "mobile",
         operator: str = "telecom",
+        remember_password: bool = True,
     ) -> None:
-        """保存登录凭据 (加密存储密码)"""
+        """保存登录凭据 (加密存储密码，可选是否记住密码)"""
         config = self.load()
         config["username"] = username
-        config["encrypted_password"] = self._encrypt_password(password)
+        if remember_password:
+            config["encrypted_password"] = self._encrypt_password(password)
+        else:
+            config.pop("encrypted_password", None)  # 不记住密码时清除已保存密码
         config.pop("password", None)  # 移除旧版明文密码
         config["device"] = device
         config["operator"] = operator
+        config["remember_password"] = remember_password
         self.save(config)
 
     def clear_credentials(self) -> None:
