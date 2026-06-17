@@ -11,6 +11,7 @@ CQUPT 校园网登录/注销 HTTP 客户端
   4. 解析 JSONP 响应，检查 result == "1"
 """
 
+import base64
 import json
 import urllib.request
 import urllib.error
@@ -376,10 +377,46 @@ class CquptClient:
 
         if result != "1":
             raise LoginError(
-                f"{operation}失败: {message or '未知错误'}"
+                f"{operation}失败: {self._friendly_error(message) or '未知错误'}"
             )
 
         return message or f"{operation}成功"
+
+    def _friendly_error(self, raw_msg: str) -> str:
+        """
+        将服务器原始错误信息 Decode 并映射为用户友好的中文提示
+
+        服务器返回的错误信息为 Base64 编码，解码后按关键词匹配:
+          - "userid"     → 账号不存在
+          - "ldap/auth"  → 密码错误
+        """
+        if not raw_msg:
+            return ""
+
+        # 尝试 Base64 解码
+        decoded = raw_msg
+        try:
+            raw_bytes = base64.b64decode(raw_msg)
+            # 使用 latin-1 兜底，避免服务器返回非标准字节导致 UTF-8 解码失败
+            decoded = raw_bytes.decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            try:
+                decoded = raw_bytes.decode("latin-1")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        decoded_lower = decoded.lower()
+
+        # 关键词匹配 — 按特异性排序
+        if "userid" in decoded_lower:
+            return "账号不存在，请检查学号是否正确"
+        if "ldap" in decoded_lower or "auth" in decoded_lower:
+            return "密码错误，请检查密码是否正确"
+
+        # 未知错误: 返回解码后的内容 (比原始 Base64 更可读)
+        return decoded if decoded != raw_msg else raw_msg
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):

@@ -59,13 +59,19 @@ class AutoStartManager:
 
     @classmethod
     def _build_launch_command(cls) -> str:
-        """构建启动命令 (VBS 脚本内容)"""
+        """构建启动命令 (VBS 脚本内容)
+
+        VBS 字符串内嵌引号需要用连续两个双引号转义。
+        例如要在 VBS 字符串中表达双引号包围路径:
+          命令: "C:\\path\\to\\exe" --silent
+        VBS 应写为三个双引号开头、路径两侧各两个双引号、一个双引号结尾。
+        """
         if cls._is_frozen():
             # exe 模式：直接运行 exe
             exe_path = sys.executable
             return (
                 f'CreateObject("WScript.Shell").Run '
-                f'"""{exe_path}" --silent"", '
+                f'"""{exe_path}"" --silent", '
                 f'0, False'
             )
         else:
@@ -74,7 +80,7 @@ class AutoStartManager:
             script_path = cls._get_script_path()
             return (
                 f'CreateObject("WScript.Shell").Run '
-                f'"""{python_path}" "{script_path}" --silent"", '
+                f'"""{python_path}"" ""{script_path}"" --silent", '
                 f'0, False'
             )
 
@@ -100,7 +106,9 @@ class AutoStartManager:
         vbs_content = cls._build_launch_command()
 
         try:
-            with open(link_path, "w", encoding="utf-8") as f:
+            # 使用系统默认编码（中文 Windows = GBK），确保 VBScript 能正确
+            # 读取 VBS 文件中的中文字符（如 exe 路径中的中文）
+            with open(link_path, "w") as f:
                 f.write(vbs_content)
             return True
         except (IOError, PermissionError):

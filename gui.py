@@ -157,6 +157,10 @@ class CquptLoginGUI:
         # 填充已保存的配置
         self._load_saved_config()
 
+        # 每次启动时刷新自启 VBS 脚本，确保路径指向当前 exe
+        if self._config.get("auto_start", False):
+            self._autostart.enable()
+
         # 启动自动重连
         if self._config.get("keep_alive", True):
             self._start_keep_alive()
@@ -767,8 +771,11 @@ class CquptLoginGUI:
     # ------------------------------------------------------------------
 
     def _start_keep_alive(self):
-        """启动断线重连定时器"""
-        interval_ms = self._config.get("keep_alive_interval", 300) * 1000
+        """启动断线重连定时器，根据当前登录状态自适应间隔"""
+        if self._is_logged_in:
+            interval_ms = self._config.get("keep_alive_interval", 300) * 1000
+        else:
+            interval_ms = 30000  # 未登录时 30 秒快检，尽快发现网络变化
         if self._keep_alive_job is not None:
             self._root.after_cancel(self._keep_alive_job)
         self._schedule_keep_alive(int(interval_ms))
@@ -780,29 +787,108 @@ class CquptLoginGUI:
         )
 
     def _keep_alive_check(self):
-        """断线重连检查 (在主线程调度)"""
+        """定时状态检测 + 断线重连 (在主线程调度)
+
+        状态检测始终运行，不受登录状态限制；自动重登仅在之前已登录时才触发。
+        未登录时用短间隔 (30s) 快速发现网络变化，已登录时用配置间隔降低请求量。
+        """
         if not self._keep_alive_var.get():
             return
 
-        if self._is_logged_in and not self._is_logging:
+        # 始终检测认证状态 (不登入，只探测)
+        if not self._is_logging:
             thread = threading.Thread(
-                target=self._do_keep_alive_check, daemon=True
+                target=self._do_status_check, daemon=True
             )
             thread.start()
 
-        # 调度下一次检查
-        interval_ms = self._config.get("keep_alive_interval", 300) * 1000
+        # 自适应间隔：未登录时 30 秒快检，已登录时用配置间隔
+        if self._is_logged_in:
+            interval_ms = self._config.get("keep_alive_interval", 300) * 1000
+        else:
+            interval_ms = 30000  # 30 秒快速轮询，等待网络就绪
         self._schedule_keep_alive(int(interval_ms))
 
-    def _do_keep_alive_check(self):
-        """后台执行重连检查 — 先探测认证状态，仅断线时重新登录"""
-        # 已认证则跳过，避免不必要的重复登录请求
+    def _do_status_check(self):
+        """后台探测认证状态，根据结果分发到主线程更新 UI 或触发重连"""
         try:
-            if self._client.check_auth_status() == "authenticated":
-                return
+            status = self._client.check_auth_status()
         except Exception:
-            pass  # 探测失败继续尝试登录
+            return  # 探测失败，等下次
 
+        self._root.after(0, self._on_status_update, status)
+
+    def _on_status_update(self, status: str):
+        """根据检测到的认证状态更新 UI；如之前已登录但检测到断线则尝试自动重连"""
+        was_logged_in = self._is_logged_in
+
+        if status == "authenticated":
+            if was_logged_in:
+                # 一切正常，无需操作
+                return
+            # 检测到已认证但 GUI 认为未登录：可能被浏览器/其他设备登录了
+            self._apply_logged_in_state("检测到已认证状态，无需重复登录", "green")
+
+        elif status == "not_authenticated":
+            if was_logged_in:
+                # 被踢掉或手动在浏览器注销了
+                self._apply_logged_out_state()
+                self._set_message("检测到已断开，正在自动重连...", "orange")
+                self._try_auto_reconnect()
+            else:
+                # 从 offline 恢复，或持续未认证
+                self._apply_logged_out_state()
+                self._set_message("未登录认证，请点击登录", "gray")
+
+        else:  # offline
+            if was_logged_in:
+                # 网络断开了
+                self._apply_logged_out_state()
+                self._set_message("网络连接已断开", "red")
+            # 未登录 + offline：保持"未连接"状态 (可能由 _on_startup_auth_detected 设置)
+
+    def _apply_logged_in_state(self, message: str, color: str):
+        """将 GUI 切换到已登录状态"""
+        self._is_logged_in = True
+        self._draw_status_dot("green")
+        self._status_text.set("● 已连接")
+        self._login_button.configure(state=tk.DISABLED)
+        self._logout_button.configure(state=tk.NORMAL)
+        self._username_entry.configure(state=tk.DISABLED)
+        self._password_entry.configure(state=tk.DISABLED)
+        self._device_combo.configure(state="disabled")
+        self._operator_combo.configure(state="disabled")
+        self._remember_password_cb.configure(state=tk.DISABLED)
+        self._set_message(message, color)
+
+        # 更新缓存的网络参数
+        params = self._client.get_cached_params()
+        if params:
+            self._config_mgr.save_network_params(params)
+        elif not self._client.get_cached_params():
+            # 检测到外部登录，没有缓存参数，无法注销
+            self._logout_button.configure(state=tk.DISABLED)
+            self._set_message(
+                "检测到已认证状态，但缺少网络参数无法注销。"
+                "请先通过浏览器注销后重新使用本程序登录",
+                "orange",
+            )
+
+    def _apply_logged_out_state(self):
+        """将 GUI 切换到未登录状态，恢复输入控件可编辑"""
+        self._is_logged_in = False
+        self._draw_status_dot("gray")
+        self._status_text.set("未认证")
+        self._login_button.configure(state=tk.NORMAL)
+        self._logout_button.configure(state=tk.DISABLED)
+        self._username_entry.configure(state=tk.NORMAL)
+        self._password_entry.configure(state=tk.NORMAL)
+        self._device_combo.configure(state="readonly")
+        self._operator_combo.configure(state="readonly")
+        self._remember_password_cb.configure(state=tk.NORMAL)
+
+    def _try_auto_reconnect(self):
+        """后台尝试自动重连 (仅在之前已登录、检测到断线时调用)"""
         config = self._config_mgr.load_credentials()
         username = config.get("username")
         password = config.get("password")
@@ -810,31 +896,38 @@ class CquptLoginGUI:
         if not username or not password:
             return
 
+        thread = threading.Thread(
+            target=self._do_auto_reconnect,
+            args=(username, password, config["device"], config["operator"]),
+            daemon=True,
+        )
+        thread.start()
+
+    def _do_auto_reconnect(self, username, password, device, operator):
+        """后台执行自动重连"""
+        try:
+            # 重连前再确认一次状态，避免重复登录
+            if self._client.check_auth_status() == "authenticated":
+                self._root.after(0, self._apply_logged_in_state,
+                                "网络已恢复，无需重新登录", "green")
+                return
+        except Exception:
+            pass
+
         try:
             message = self._client.login(
                 username=username,
                 password=password,
-                device=config["device"],
-                operator=config["operator"],
+                device=device,
+                operator=operator,
             )
             self._root.after(0, self._on_keep_alive_reconnect, message)
         except LoginError:
             pass  # 静默重试，下次定时器会自动再试
 
     def _on_keep_alive_reconnect(self, message: str):
-        """断线重连成功回调 (主线程) — 仅在 GUI 状态与实际不一致时更新"""
-        if not self._is_logged_in:
-            self._is_logged_in = True
-            self._draw_status_dot("green")
-            self._status_text.set("● 已连接")
-            self._login_button.configure(state=tk.DISABLED)
-            self._logout_button.configure(state=tk.NORMAL)
-            self._set_message("断线已自动重连", "green")
-
-            # 更新持久化的网络参数
-            params = self._client.get_cached_params()
-            if params:
-                self._config_mgr.save_network_params(params)
+        """断线自动重连成功回调"""
+        self._apply_logged_in_state("断线已自动重连", "green")
 
     def _stop_keep_alive(self):
         """停止断线重连定时器"""
