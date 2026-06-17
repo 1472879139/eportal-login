@@ -276,6 +276,15 @@ class CquptLoginGUI:
             font=("Microsoft YaHei UI", 10),
         ).pack(side=tk.LEFT)
 
+        # 刷新按钮
+        self._refresh_button = ttk.Button(
+            status_frame,
+            text="刷新",
+            width=5,
+            command=self._on_refresh,
+        )
+        self._refresh_button.pack(side=tk.RIGHT, padx=(4, 0))
+
         # 消息区域
         self._message_var = tk.StringVar(value="就绪，请点击登录")
         self._message_label = ttk.Label(
@@ -491,6 +500,33 @@ class CquptLoginGUI:
             self._login_button.configure(state=tk.NORMAL)
             self._logout_button.configure(state=tk.DISABLED)
             self._set_message("未检测到校园网连接", "red")
+
+    def _on_refresh(self):
+        """手动刷新状态按钮回调"""
+        if self._is_logging:
+            return
+        if not self._startup_auth_checked:
+            return
+
+        self._refresh_button.configure(state=tk.DISABLED, text="...")
+        self._set_message("正在刷新状态...", "blue")
+        thread = threading.Thread(target=self._do_refresh_check, daemon=True)
+        thread.start()
+
+    def _do_refresh_check(self):
+        """后台执行手动刷新检测"""
+        try:
+            status = self._client.check_auth_status()
+        except Exception:
+            status = "offline"
+        self._root.after(0, self._on_refresh_done, status)
+
+    def _on_refresh_done(self, status: str):
+        """刷新完成回调"""
+        self._refresh_button.configure(state=tk.NORMAL, text="刷新")
+        self._on_status_update(status)
+        # 即使 _on_status_update 因状态未变而跳过，也更新消息提示刷新已完成
+        self._set_message(f"刷新完成 ({self._status_text.get()})", "gray")
 
     def _on_login(self):
         """点击登录按钮"""
