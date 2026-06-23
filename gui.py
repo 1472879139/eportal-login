@@ -879,6 +879,8 @@ class CquptLoginGUI:
             if was_logged_in:
                 # 一切正常，清除不一致标志
                 self._actually_disconnected = False
+                if not allow_reconnect:
+                    self._set_message("认证状态正常", "green")
                 return
             # 检测到已认证但 GUI 认为未登录：可能被浏览器/其他设备登录了
             self._apply_logged_in_state("检测到已认证状态，无需重复登录", "green")
