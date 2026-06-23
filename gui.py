@@ -13,6 +13,7 @@ CQUPT 校园网登录工具 — tkinter 可视化界面
 """
 
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional
@@ -134,6 +135,8 @@ class CquptLoginGUI:
         self._startup_auth_checked = False  # 启动认证检测是否完成
         self._auto_login_tried = False     # 自动登录是否已尝试（避免反复重试）
         self._actually_disconnected = False  # GUI 认为已登录但实际已断开（浏览器注销等）
+        self._countdown_end: float = 0            # 下次 keep-alive 检测的绝对时间戳
+        self._countdown_job: Optional[str] = None  # 1 秒倒计时 tick 的 after() ID
 
         # 加载配置
         self._config = self._config_mgr.load()
@@ -277,6 +280,15 @@ class CquptLoginGUI:
             textvariable=self._status_text,
             font=("Microsoft YaHei UI", 10),
         ).pack(side=tk.LEFT)
+
+        # 倒计时
+        self._countdown_var = tk.StringVar(value="")
+        self._countdown_label = ttk.Label(
+            status_frame,
+            textvariable=self._countdown_var,
+            foreground="gray",
+        )
+        self._countdown_label.pack(side=tk.RIGHT, padx=(4, 0))
 
         # 刷新按钮
         self._refresh_button = ttk.Button(
@@ -823,6 +835,33 @@ class CquptLoginGUI:
     # 断线重连
     # ------------------------------------------------------------------
 
+    def _start_countdown(self, interval_seconds: int):
+        """启动可视化倒计时"""
+        self._countdown_end = time.time() + interval_seconds
+        if self._countdown_job is not None:
+            self._root.after_cancel(self._countdown_job)
+        self._tick_countdown()
+
+    def _tick_countdown(self):
+        """每秒更新倒计时显示"""
+        remaining = max(0, int(self._countdown_end - time.time()))
+        minutes = remaining // 60
+        seconds = remaining % 60
+        self._countdown_var.set(f"下次检测: {minutes}:{seconds:02d}")
+        if remaining > 0:
+            self._countdown_job = self._root.after(1000, self._tick_countdown)
+
+    def _reset_countdown(self):
+        """根据当前登录状态重置倒计时"""
+        if not self._keep_alive_var.get():
+            self._countdown_var.set("")
+            return
+        if self._is_logged_in:
+            interval = self._config.get("keep_alive_interval", 300)
+        else:
+            interval = 30
+        self._start_countdown(interval)
+
     def _start_keep_alive(self):
         """启动断线重连定时器，根据当前登录状态自适应间隔"""
         if self._is_logged_in:
@@ -832,6 +871,7 @@ class CquptLoginGUI:
         if self._keep_alive_job is not None:
             self._root.after_cancel(self._keep_alive_job)
         self._schedule_keep_alive(int(interval_ms))
+        self._reset_countdown()
 
     def _schedule_keep_alive(self, interval_ms: int):
         """调度下一次重连检查"""
@@ -861,6 +901,7 @@ class CquptLoginGUI:
         else:
             interval_ms = 30000  # 30 秒快速轮询，等待网络就绪
         self._schedule_keep_alive(int(interval_ms))
+        self._reset_countdown()
 
     def _do_status_check(self):
         """后台探测认证状态，根据结果分发到主线程更新 UI 或触发重连"""
@@ -1068,6 +1109,10 @@ class CquptLoginGUI:
         if self._keep_alive_job is not None:
             self._root.after_cancel(self._keep_alive_job)
             self._keep_alive_job = None
+        if self._countdown_job is not None:
+            self._root.after_cancel(self._countdown_job)
+            self._countdown_job = None
+        self._countdown_var.set("")
 
     def _do_logout_sync(self):
         """同步注销 (在关闭窗口时使用)"""
