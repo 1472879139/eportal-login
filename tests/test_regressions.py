@@ -22,6 +22,14 @@ class SimpleVar:
         self.value = value
 
 
+class FakeWidget:
+    def __init__(self):
+        self.config = {}
+
+    def configure(self, **kwargs):
+        self.config.update(kwargs)
+
+
 class RecordingConfigManager:
     def __init__(self, initial=None):
         self.data = dict(initial or {})
@@ -102,19 +110,46 @@ class GuiRegressionTests(unittest.TestCase):
         self.assertEqual(gui._autostart.calls, [True])
         self.assertTrue(gui._config_mgr.saved["auto_start"])
 
-    def test_logout_with_empty_credentials_does_not_start_request(self):
+    def test_logout_allows_empty_credentials(self):
         gui = self.make_gui_shell(password="")
         gui._is_logging = False
         gui._actually_disconnected = False
+        gui._draw_status_dot = mock.Mock()
         gui._set_message = mock.Mock()
-        gui._show_popup = mock.Mock()
-        gui._apply_logged_out_state = mock.Mock()
         gui._set_logging_state = mock.Mock()
+        started = []
 
-        gui._on_logout()
+        class FakeThread:
+            def __init__(self, target, args, daemon):
+                self.target = target
+                self.args = args
+                self.daemon = daemon
 
-        gui._set_logging_state.assert_not_called()
-        gui._set_message.assert_called()
+            def start(self):
+                started.append(self.args)
+
+        with mock.patch("dormnet_login.gui.threading.Thread", FakeThread):
+            gui._on_logout()
+
+        gui._set_logging_state.assert_called_once_with(True)
+        self.assertEqual(started[0][0], "20240001")
+        self.assertEqual(started[0][1], "")
+
+    def test_logged_in_controls_stay_locked_without_credentials(self):
+        gui = self.make_gui_shell(password="")
+        gui._login_button = FakeWidget()
+        gui._logout_button = FakeWidget()
+        gui._username_entry = FakeWidget()
+        gui._password_entry = FakeWidget()
+        gui._device_combo = FakeWidget()
+        gui._operator_combo = FakeWidget()
+        gui._remember_password_cb = FakeWidget()
+
+        gui._set_logged_in_controls()
+
+        self.assertEqual(gui._username_entry.config["state"], "disabled")
+        self.assertEqual(gui._password_entry.config["state"], "disabled")
+        self.assertEqual(gui._device_combo.config["state"], "disabled")
 
 
 class EntryPointRegressionTests(unittest.TestCase):

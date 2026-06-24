@@ -511,13 +511,7 @@ class CquptLoginGUI:
                 params = self._client.build_local_network_params()
             self._client.set_cached_params(params)
             self._set_logged_in_controls()
-            if self._has_entered_credentials():
-                self._set_message("检测到已认证状态，可直接注销", "green")
-            else:
-                self._set_message(
-                    "检测到已认证状态，请输入账号和密码后注销",
-                    "orange",
-                )
+            self._set_message("检测到已认证状态，可直接注销", "green")
 
         elif status == "not_authenticated":
             self._is_logged_in = False
@@ -672,11 +666,6 @@ class CquptLoginGUI:
 
         username = self._username_var.get().strip()
         password = self._password_var.get()
-        if not username or not password:
-            message = "请输入账号和密码后再注销"
-            self._set_message(f"⚠ {message}", "orange")
-            self._show_popup("提示", message, "warning")
-            return
         config = self._collect_config()
 
         self._set_logging_state(True)
@@ -843,27 +832,15 @@ class CquptLoginGUI:
         if self._message_label is not None:
             self._message_label.configure(foreground=color)
 
-    def _has_entered_credentials(self) -> bool:
-        """当前界面是否有注销所需的账号和密码。"""
-        return bool(self._username_var.get().strip() and self._password_var.get())
-
     def _set_logged_in_controls(self):
-        """根据凭据是否完整设置已登录时的控件状态。"""
-        has_credentials = self._has_entered_credentials()
+        """设置已登录时的控件状态。"""
         self._login_button.configure(state=tk.DISABLED)
         self._logout_button.configure(state=tk.NORMAL)
-        if has_credentials:
-            self._username_entry.configure(state=tk.DISABLED)
-            self._password_entry.configure(state=tk.DISABLED)
-            self._device_combo.configure(state="disabled")
-            self._operator_combo.configure(state="disabled")
-            self._remember_password_cb.configure(state=tk.DISABLED)
-        else:
-            self._username_entry.configure(state=tk.NORMAL)
-            self._password_entry.configure(state=tk.NORMAL)
-            self._device_combo.configure(state="readonly")
-            self._operator_combo.configure(state="readonly")
-            self._remember_password_cb.configure(state=tk.NORMAL)
+        self._username_entry.configure(state=tk.DISABLED)
+        self._password_entry.configure(state=tk.DISABLED)
+        self._device_combo.configure(state="disabled")
+        self._operator_combo.configure(state="disabled")
+        self._remember_password_cb.configure(state=tk.DISABLED)
 
     def _draw_status_dot(self, color: str):
         """在 status canvas 上绘制状态圆点"""
@@ -1011,9 +988,6 @@ class CquptLoginGUI:
         self._draw_status_dot("green")
         self._status_text.set("● 已连接")
         self._set_logged_in_controls()
-        if not self._has_entered_credentials():
-            message = "检测到已认证状态，请输入账号和密码后注销"
-            color = "orange"
         self._set_message(message, color)
 
         # 更新缓存的网络参数
